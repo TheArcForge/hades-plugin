@@ -1,6 +1,10 @@
 # Hades — Claude Code Plugin
 
-Unity-aware AI skills, commands, and MCP connectivity for Claude Code. Part of the [Hades](https://github.com/TheArcForge/Hades) Unity AI infrastructure.
+> **In the underworld of your Unity project, nothing is hidden from Hades.**
+
+This is the Claude Code plugin half of [**Hades**](https://github.com/TheArcForge/Hades) — Unity-aware AI infrastructure that gives your agent a queryable knowledge graph of your project. It packages the skills, commands, and MCP connectivity that let Claude Code talk to the Hades server running inside Unity Editor.
+
+> **Looking for what Hades is and why?** Start at the [main repository](https://github.com/TheArcForge/Hades). This repo is a generated artifact — see the note at the bottom.
 
 ## What this plugin provides
 
@@ -14,7 +18,7 @@ Unity-aware AI skills, commands, and MCP connectivity for Claude Code. Part of t
 
 - **Node.js 20+** — the MCP launcher and hub are Node.js processes
 - **Claude Code** — install from [claude.ai/download](https://claude.ai/download)
-- **Hades Unity Package** — installed in your Unity project (separate from this plugin)
+- **Hades Unity Package** — installed in your Unity project (separate from this plugin; see the [main repo](https://github.com/TheArcForge/Hades))
 
 ## Installation
 
@@ -68,6 +72,10 @@ All communication is local. No cloud services, no telemetry.
 | `/hades:status` not recognized | Plugin not installed. Re-run the install command. |
 | Tools disappear after recompile | Wait ~10 seconds — Hub buffers during Unity domain reload. |
 | Hub won't start | Run `node --version` to verify Node.js 20+. |
+
+## About this repository
+
+This repository is **generated** from the [TheArcForge/Hades](https://github.com/TheArcForge/Hades) source repo and published here for the Claude Code marketplace. **Do not submit pull requests here** — open issues and PRs against the [main repository](https://github.com/TheArcForge/Hades) instead. See its `CONTRIBUTING.md` for details.
 
 ## License
 
