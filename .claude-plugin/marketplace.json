@@ -1,0 +1,28 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "arcforge-hades",
+  "description": "ArcForge Hades plugin marketplace",
+  "owner": {
+    "name": "ArcForge",
+    "url": "https://github.com/TheArcForge"
+  },
+  "plugins": [
+    {
+      "name": "hades",
+      "displayName": "Hades",
+      "description": "Unity-aware AI infrastructure for Claude Code: project knowledge graph, observability, memory, 89 MCP tools, and 22 skills.",
+      "author": {
+        "name": "ArcForge",
+        "url": "https://github.com/TheArcForge"
+      },
+      "category": "development",
+      "version": "0.9.9",
+      "homepage": "https://github.com/TheArcForge/Hades",
+      "source": {
+        "source": "github",
+        "repo": "TheArcForge/hades-plugin"
+      },
+      "keywords": ["unity", "game-development", "mcp", "knowledge-graph"]
+    }
+  ]
+}

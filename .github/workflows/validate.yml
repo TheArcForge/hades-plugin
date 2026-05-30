@@ -1,0 +1,58 @@
+name: Validate Plugin
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Validate Plugin Structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required files
+        run: |
+          echo "Checking required files..."
+          test -f .claude-plugin/plugin.json || { echo "FAIL: .claude-plugin/plugin.json missing"; exit 1; }
+          test -f .mcp.json || { echo "FAIL: .mcp.json missing"; exit 1; }
+          test -f README.md || { echo "FAIL: README.md missing"; exit 1; }
+          test -f LICENSE || { echo "FAIL: LICENSE missing"; exit 1; }
+          test -f CLAUDE.md || { echo "FAIL: CLAUDE.md missing"; exit 1; }
+          test -f Bridge~/launcher/dist/index.js || { echo "FAIL: Bridge launcher dist missing"; exit 1; }
+          test -f Bridge~/hub/dist/index.js || { echo "FAIL: Bridge hub dist missing"; exit 1; }
+          test -f Scanner~/index.js || { echo "FAIL: Scanner index.js missing"; exit 1; }
+          test -f Scanner~/package.json || { echo "FAIL: Scanner package.json missing"; exit 1; }
+          echo "All required files present."
+
+      - name: Validate plugin.json
+        run: python3 -c "import json; d=json.load(open('.claude-plugin/plugin.json')); assert 'name' in d; assert 'version' in d; print(f'Plugin: {d[\"name\"]} v{d[\"version\"]}')"
+
+      - name: Validate .mcp.json
+        run: |
+          python3 -c "import json; json.load(open('.mcp.json'))"
+          grep -q 'CLAUDE_PLUGIN_ROOT' .mcp.json || { echo "FAIL: .mcp.json must use CLAUDE_PLUGIN_ROOT"; exit 1; }
+
+      - name: Check skill count
+        run: |
+          COUNT=$(find skills -name "SKILL.md" | wc -l | tr -d ' ')
+          echo "Skills found: $COUNT"
+          [ "$COUNT" -eq 22 ] || { echo "FAIL: expected 22 skills, got $COUNT"; exit 1; }
+
+      - name: Check command count
+        run: |
+          COUNT=$(ls commands/*.md 2>/dev/null | wc -l | tr -d ' ')
+          echo "Commands found: $COUNT"
+          [ "$COUNT" -eq 6 ] || { echo "FAIL: expected 6 commands, got $COUNT"; exit 1; }
+
+      - name: Check no excluded files
+        run: |
+          METAS=$(find . -name "*.meta" -not -path "./.git/*" | wc -l | tr -d ' ')
+          [ "$METAS" -eq 0 ] || { echo "FAIL: found $METAS .meta files"; exit 1; }
+          CS=$(find . -name "*.cs" -not -path "./.git/*" | wc -l | tr -d ' ')
+          [ "$CS" -eq 0 ] || { echo "FAIL: found $CS .cs files"; exit 1; }
+          NM=$(find . -name "node_modules" -type d -not -path "./.git/*" | wc -l | tr -d ' ')
+          [ "$NM" -eq 0 ] || { echo "FAIL: found node_modules"; exit 1; }
+          echo "No excluded files found."
