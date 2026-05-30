@@ -28,7 +28,8 @@ jobs:
           echo "All required files present."
 
       - name: Validate plugin.json
-        run: python3 -c "import json; d=json.load(open('.claude-plugin/plugin.json')); assert 'name' in d; assert 'version' in d; print(f'Plugin: {d[\"name\"]} v{d[\"version\"]}')"
+        run: |
+          python3 -c "import json; d=json.load(open('.claude-plugin/plugin.json')); assert 'name' in d; assert 'version' in d; print(f'Plugin: {d[\"name\"]} v{d[\"version\"]}')"
 
       - name: Validate .mcp.json
         run: |
