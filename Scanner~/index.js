@@ -2,7 +2,7 @@ import { parseArgs } from 'node:util';
 import { Worker } from 'worker_threads';
 import { cpus } from 'os';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
+import { dirname, join, relative, sep } from 'path';
 import { discoverCsFiles } from './src/discovery.js';
 import { parseFile } from './src/ts-parser.js';
 import { resolveGuid } from './src/meta-resolver.js';
@@ -63,7 +63,7 @@ export async function scan({
   mode,
   dirs,
   projectRoot,
-  scannerVersion = 3,
+  scannerVersion = 4,
   guids = null,
   tier = 'project',
 }) {
@@ -84,9 +84,9 @@ export async function scan({
 
     if (mode === 'full') {
       _runMetaScan({ db, dirs });
-      return await _runFullScan({ db, allFiles, guidToFile, scannerVersion, tier });
+      return await _runFullScan({ db, allFiles, guidToFile, scannerVersion, tier, projectRoot });
     } else if (mode === 'incremental') {
-      return await _runIncrementalScan({ db, guids: guids ?? [], guidToFile, scannerVersion, tier });
+      return await _runIncrementalScan({ db, guids: guids ?? [], guidToFile, scannerVersion, tier, projectRoot });
     } else {
       process.stderr.write(`Unknown mode: ${mode}\n`);
       return EXIT_ERROR;
@@ -99,7 +99,7 @@ export async function scan({
 
 // ─── Full scan ───────────────────────────────────────────────────────────────
 
-async function _runFullScan({ db, allFiles, guidToFile, scannerVersion, tier }) {
+async function _runFullScan({ db, allFiles, guidToFile, scannerVersion, tier, projectRoot }) {
   const total = allFiles.length;
   let current = 0;
 
@@ -154,12 +154,13 @@ async function _runFullScan({ db, allFiles, guidToFile, scannerVersion, tier }) 
           contentHash: wr.hash,
           scannerVersion,
           parsed: wr.parsed,
+          projectRoot,
         });
       }
     });
   } else {
     for (const item of toScan) {
-      _scanFile({ db, filePath: item.filePath, guid: item.guid, contentHash: item.contentHash, scannerVersion });
+      _scanFile({ db, filePath: item.filePath, guid: item.guid, contentHash: item.contentHash, scannerVersion, projectRoot });
     }
   }
 
@@ -168,7 +169,7 @@ async function _runFullScan({ db, allFiles, guidToFile, scannerVersion, tier }) 
 
 // ─── Incremental scan ────────────────────────────────────────────────────────
 
-async function _runIncrementalScan({ db, guids, guidToFile, scannerVersion, tier }) {
+async function _runIncrementalScan({ db, guids, guidToFile, scannerVersion, tier, projectRoot }) {
   const total = guids.length;
   let current = 0;
 
@@ -193,7 +194,7 @@ async function _runIncrementalScan({ db, guids, guidToFile, scannerVersion, tier
     }
 
     // Re-scan this file
-    _scanFile({ db, filePath, guid, contentHash, scannerVersion });
+    _scanFile({ db, filePath, guid, contentHash, scannerVersion, projectRoot });
   }
 
   return EXIT_OK;
@@ -201,15 +202,23 @@ async function _runIncrementalScan({ db, guids, guidToFile, scannerVersion, tier
 
 // ─── File scanning ───────────────────────────────────────────────────────────
 
-function _writeParseResult({ db, filePath, guid, contentHash, scannerVersion, parsed }) {
+function _writeParseResult({ db, filePath, guid, contentHash, scannerVersion, parsed, projectRoot }) {
   if (parsed.nodes.length === 0) return;
 
-  // Delete old nodes + pending edges for this guid
-  db.deleteNodesByGuid(guid);
+  // Capture inbound edges to this file's Script + ScriptType nodes BEFORE deleting them, so
+  // references from OTHER (unchanged) files survive the re-scan (restored at the end). Then
+  // delete the file's FULL node set — the NULL-guid ScriptType/ScriptMethod nodes (by file_id)
+  // as well as the guid-bearing Script node. deleteNodesByGuid alone left the type/method nodes
+  // orphaned: leaking them, and stranding their inbound edges on the dead old node.
+  const oldScriptId = db.getScriptNodeIdByGuid(guid);
+  const capturedInbound = oldScriptId != null ? db.captureInboundToFile(oldScriptId) : [];
+  db.deleteFileNodes(guid, oldScriptId);
   db.deletePendingEdgesBySourceAsset(guid);
 
   // Local parse id → DB row id mapping
   const idMap = new Map();
+  // New ScriptType name → DB row id, for re-pointing captured inbound edges after re-scan.
+  const newTypeByName = new Map();
 
   // Write Script node first (id=0 in parsed)
   const scriptNode = parsed.nodes.find(n => n.type === 'Script');
@@ -218,7 +227,7 @@ function _writeParseResult({ db, filePath, guid, contentHash, scannerVersion, pa
   const scriptDbId = db.insertNode({
     type: scriptNode.type,
     name: scriptNode.name,
-    path: scriptNode.path,
+    path: _toProjectRelative(scriptNode.path, projectRoot),
     guid,
     properties: scriptNode.properties ? JSON.stringify(scriptNode.properties) : null,
     sourceRange: scriptNode.sourceRange ?? null,
@@ -232,7 +241,7 @@ function _writeParseResult({ db, filePath, guid, contentHash, scannerVersion, pa
     const dbId = db.insertNode({
       type: node.type,
       name: node.name,
-      path: node.path,
+      path: _toProjectRelative(node.path, projectRoot),
       guid: node.type === 'Script' ? guid : null,
       fileId: scriptDbId,
       properties: node.properties ? JSON.stringify(node.properties) : null,
@@ -240,15 +249,19 @@ function _writeParseResult({ db, filePath, guid, contentHash, scannerVersion, pa
     });
     idMap.set(node.id, dbId);
 
-    // Write pending edges for ScriptType nodes
+    // Write pending edges for ScriptType nodes.
+    // All base-list supertypes are emitted as neutral 'extends_or_implements' edges;
+    // ResolvePendingEdges in GraphBuilder reclassifies them to 'inherits_from' or
+    // 'implements' based on the resolved target node's 'kind' property.
     if (node.type === 'ScriptType') {
+      newTypeByName.set(node.name, dbId);
       const props = node.properties ?? {};
-      if (props.base_type) {
-        db.insertPendingEdge(dbId, 'inherits_from', props.base_type, props.namespace ?? null, guid);
-      }
-      if (Array.isArray(props.interfaces)) {
-        for (const iface of props.interfaces) {
-          db.insertPendingEdge(dbId, 'implements', iface, props.namespace ?? null, guid);
+      if (Array.isArray(props.supertypes)) {
+        for (const st of props.supertypes) {
+          const stName = typeof st === 'string' ? st : st.name;
+          if (stName) {
+            db.insertPendingEdge(dbId, 'extends_or_implements', stName, props.namespace ?? null, guid);
+          }
         }
       }
     }
@@ -282,15 +295,39 @@ function _writeParseResult({ db, filePath, guid, contentHash, scannerVersion, pa
     }
   }
 
+  // Restore captured inbound edges, re-pointed at the recreated nodes: Script targets by guid
+  // (the new Script id), ScriptType targets by name. Skip sources that no longer exist (their
+  // file was itself re-scanned and re-emits its own outbound edges). insertEdge is INSERT OR
+  // IGNORE, so duplicates are harmless.
+  for (const cap of capturedInbound) {
+    if (!db.nodeExists(cap.sourceId)) continue;
+    const newTargetId = cap.targetType === 'Script' ? scriptDbId : newTypeByName.get(cap.targetName);
+    if (newTargetId == null) continue; // target type removed in the new version of the file
+    db.insertEdge(cap.sourceId, newTargetId, cap.edgeType, cap.properties);
+  }
+
   // Record scanned asset
   db.recordScannedAsset(guid, contentHash, scannerVersion);
 }
 
-function _scanFile({ db, filePath, guid, contentHash, scannerVersion }) {
+function _scanFile({ db, filePath, guid, contentHash, scannerVersion, projectRoot }) {
   const parsed = parseFile(filePath);
   db.runInTransaction(() => {
-    _writeParseResult({ db, filePath, guid, contentHash, scannerVersion, parsed });
+    _writeParseResult({ db, filePath, guid, contentHash, scannerVersion, parsed, projectRoot });
   });
+}
+
+/**
+ * Converts an absolute scan path to a project-relative path (e.g. "Assets/Foo.cs"),
+ * matching how the C# scanners key every other asset. Forward-slash normalized so
+ * Script/ScriptType nodes resolve the same way on Windows and macOS. Falls back to
+ * the original path if no projectRoot is available.
+ */
+function _toProjectRelative(p, projectRoot) {
+  if (!p || !projectRoot) return p;
+  const rel = relative(projectRoot, p);
+  if (!rel || rel.startsWith('..')) return p; // outside the project — leave as-is
+  return rel.split(sep).join('/');
 }
 
 // ─── Meta-scan for non-code assets ──────────────────────────────────────────
@@ -329,7 +366,7 @@ if (isCLI) {
   const dirs = (values['dirs'] ?? '').split(',').filter(Boolean);
   const projectRoot = values['project-root'] ?? process.cwd();
   const guidsList = values['guids'] ? values['guids'].split(',').filter(Boolean) : null;
-  const scannerVersion = values['scanner-version'] ? Number(values['scanner-version']) : 3;
+  const scannerVersion = values['scanner-version'] ? Number(values['scanner-version']) : 4;
   const tier = values['tier'] ?? 'project';
 
   let writer;

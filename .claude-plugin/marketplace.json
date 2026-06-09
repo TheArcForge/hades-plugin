@@ -16,13 +16,18 @@
         "url": "https://github.com/TheArcForge"
       },
       "category": "development",
-      "version": "0.9.9",
+      "version": "1.0.0",
       "homepage": "https://github.com/TheArcForge/Hades",
       "source": {
         "source": "github",
         "repo": "TheArcForge/hades-plugin"
       },
-      "keywords": ["unity", "game-development", "mcp", "knowledge-graph"]
+      "keywords": [
+        "unity",
+        "game-development",
+        "mcp",
+        "knowledge-graph"
+      ]
     }
   ]
 }
